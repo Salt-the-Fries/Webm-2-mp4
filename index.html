@@ -51,7 +51,7 @@ function render(){
 function updateFile(f){
  const i=queue.indexOf(f);if(i<0)return;const row=filesEl.querySelector('[data-index="'+i+'"]');if(!row){render();return}
  const label=f.state==='done'?'MP4 ready':f.state==='error'?'Conversion failed':f.state==='working'?'Converting…':'Preparing…';
- row.querySelector('.file-meta').textContent=fmt(f.file.size)+' · '+label;
+ row.querySelector('.file-meta').textContent=fmt(f.file.size)+' · '+label+(f.error?' · '+f.error:'');
  const status=row.querySelector('.status');status.className='status '+f.state;status.textContent=f.state==='done'?'100% DONE':f.state==='error'?'ERROR':f.state==='working'?Math.round(f.progress)+'%':'STARTING';
  row.querySelector('.bar i').style.width=f.progress+'%';
 }
@@ -70,10 +70,12 @@ async function getEngine(){
   const pkg='https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm';
   const core='https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
   // Keep the worker on the CDN origin. Turning this module worker into a blob breaks its relative imports (./const.js, ./errors.js).
-  const classWorkerURL=pkg+'/worker.js';
+  // A module worker must be same-origin. Use a same-origin Blob bootstrap that imports the real worker from jsDelivr; its own relative imports then resolve against jsDelivr correctly.
+  const workerBootstrap=new Blob(['import "'+pkg+'/worker.js";'],{type:'text/javascript'});
+  const classWorkerURL=URL.createObjectURL(workerBootstrap);
   const coreURL=await toBlobURL(core+'/ffmpeg-core.js','text/javascript');
   const wasmURL=await toBlobURL(core+'/ffmpeg-core.wasm','application/wasm');
-  await instance.load({classWorkerURL,coreURL,wasmURL});ffmpeg=instance;
+  try{await instance.load({classWorkerURL,coreURL,wasmURL})}finally{URL.revokeObjectURL(classWorkerURL)}ffmpeg=instance;
   engineLabel.textContent='Engine ready · processing on this device';return instance;
  })();
  try{return await loadingPromise}catch(error){loadingPromise=null;throw error}
