@@ -32,17 +32,77 @@ button{font:600 13px 'Space Grotesk';border:0;cursor:pointer;transition:transfor
 <script type="module">
 import { FFmpeg } from 'https://esm.sh/@ffmpeg/ffmpeg@0.12.15';
 import { toBlobURL } from 'https://esm.sh/@ffmpeg/util@0.12.2';
-const $=s=>document.querySelector(s), picker=$('#picker'),drop=$('#drop'),filesEl=$('#files'),convertBtn=$('#convert'),summary=$('#summary'),engine=$('#engine');
-let queue=[],ffmpeg=null,loading=null,busy=false;
-const fmt=n=>n<1024? n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB';
+const $=s=>document.querySelector(s), picker=$('#picker'), drop=$('#drop'), filesEl=$('#files'), convertBtn=$('#convert'), summary=$('#summary'), engineLabel=$('#engine');
+let queue=[], ffmpeg=null, loadingPromise=null, busy=false, activeFile=null;
+const fmt=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB';
 const safe=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function render(){filesEl.innerHTML='';queue.forEach((f,i)=>{const row=document.createElement('div');row.className='file';row.style.animationDelay=Math.min(i*35,350)+'ms';row.innerHTML='<div class="file-left"><div class="file-name">'+safe(f.file.name)+'</div><div class="file-meta">'+fmt(f.file.size)+' · '+(f.state==='done'?'MP4 ready':f.state==='error'?'Conversion failed':f.state==='working'?'Converting…': 'Waiting')+'</div><div class="bar"><i style="width:'+f.progress+'%"></i></div></div><div class="file-right"><div class="status '+f.state+'">'+(f.state==='done'?'100% DONE':f.state==='error'?'ERROR':f.state==='working'?Math.round(f.progress)+'%':'QUEUED')+'</div>'+(f.url?'<a class="download" href="'+f.url+'" download="'+safe(f.outputName)+'">↓ MP4</a>':'')+(!busy?'<button class="remove" data-remove="'+i+'" aria-label="Remove file">×</button>':'')+'</div>';filesEl.append(row)});summary.hidden=!queue.length;$('#count').textContent=queue.length+' files · '+queue.filter(f=>f.state==='done').length+' converted';convertBtn.disabled=!queue.some(f=>f.state==='queued'||f.state==='error')||busy;convertBtn.textContent=busy?'Converting…':'Convert batch ↗'}
+function render(){
+ filesEl.innerHTML='';
+ queue.forEach((f,i)=>{
+  const row=document.createElement('div');row.className='file';row.dataset.index=String(i);row.style.animationDelay=Math.min(i*35,350)+'ms';
+  const label=f.state==='done'?'MP4 ready':f.state==='error'?'Conversion failed':f.state==='working'?'Converting…':f.state==='preparing'?'Preparing…':'Waiting';
+  const status=f.state==='done'?'100% DONE':f.state==='error'?'ERROR':f.state==='working'?Math.round(f.progress)+'%':f.state==='preparing'?'STARTING':'QUEUED';
+  row.innerHTML='<div class="file-left"><div class="file-name">'+safe(f.file.name)+'</div><div class="file-meta">'+fmt(f.file.size)+' · '+label+'</div><div class="bar"><i style="width:'+f.progress+'%"></i></div></div><div class="file-right"><div class="status '+f.state+'">'+status+'</div>'+(f.url?'<a class="download" href="'+f.url+'" download="'+safe(f.outputName)+'">↓ MP4</a>':'')+(!busy?'<button class="remove" data-remove="'+i+'" aria-label="Remove file">×</button>':'')+'</div>';
+  filesEl.append(row);
+ });
+ summary.hidden=!queue.length;$('#count').textContent=queue.length+' files · '+queue.filter(f=>f.state==='done').length+' converted';
+ convertBtn.disabled=!queue.some(f=>['queued','error'].includes(f.state))||busy;convertBtn.textContent=busy?'Converting…':'Convert batch ↗';
+}
+function updateFile(f){
+ const i=queue.indexOf(f);if(i<0)return;const row=filesEl.querySelector('[data-index="'+i+'"]');if(!row){render();return}
+ const label=f.state==='done'?'MP4 ready':f.state==='error'?'Conversion failed':f.state==='working'?'Converting…':'Preparing…';
+ row.querySelector('.file-meta').textContent=fmt(f.file.size)+' · '+label;
+ const status=row.querySelector('.status');status.className='status '+f.state;status.textContent=f.state==='done'?'100% DONE':f.state==='error'?'ERROR':f.state==='working'?Math.round(f.progress)+'%':'STARTING';
+ row.querySelector('.bar i').style.width=f.progress+'%';
+}
 function add(list){for(const file of list){if(!file.name.toLowerCase().endsWith('.webm'))continue;if(queue.some(x=>x.file.name===file.name&&x.file.size===file.size))continue;queue.push({file,state:'queued',progress:0,url:null,outputName:file.name.replace(/\.webm$/i,'')+'.mp4'})}render()}
-picker.addEventListener('change',e=>{add(e.target.files);picker.value=''});drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over')});drop.addEventListener('dragleave',()=>drop.classList.remove('over'));drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');add(e.dataTransfer.files)});
-filesEl.addEventListener('click',e=>{const b=e.target.closest('[data-remove]');if(b&&!busy){const f=queue.splice(+b.dataset.remove,1)[0];if(f.url)URL.revokeObjectURL(f.url);render()}});
-$('#clear').onclick=()=>{if(busy)return;queue.forEach(f=>f.url&&URL.revokeObjectURL(f.url));queue=[];render()};
-async function getEngine(){if(ffmpeg)return ffmpeg;if(loading)return loading;loading=(async()=>{engine.innerHTML='<span class="loader"></span>Loading conversion engine…';const core='https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';const instance=new FFmpeg();instance.on('log',({message})=>{if(message)engine.textContent=message.slice(-100)});await instance.load({coreURL:await toBlobURL(core+'/ffmpeg-core.js','text/javascript'),wasmURL:await toBlobURL(core+'/ffmpeg-core.wasm','application/wasm')});ffmpeg=instance;engine.textContent='Engine ready · processing on this device';return instance})();try{return await loading}catch(e){loading=null;throw e}}
-async function convertOne(f,index){const ext='input_'+index+'.webm',out='output_'+index+'.mp4';try{const engineInstance=await getEngine();await engineInstance.writeFile(ext,new Uint8Array(await f.file.arrayBuffer()));f.state='working';f.progress=1;render();const onProgress=({progress})=>{f.progress=Math.max(1,Math.min(99,progress*100));const bar=filesEl.children[index]?.querySelector('.bar i');const status=filesEl.children[index]?.querySelector('.status');if(bar)bar.style.width=f.progress+'%';if(status)status.textContent=Math.round(f.progress)+'%'};engineInstance.on('progress',onProgress);await engineInstance.exec(['-i',ext,'-c:v','libx264','-preset','ultrafast','-crf','23','-c:a','aac','-b:a','128k','-movflags','+faststart',out]);engineInstance.off('progress',onProgress);const data=await engineInstance.readFile(out);f.url=URL.createObjectURL(new Blob([data.buffer],{type:'video/mp4'}));f.state='done';f.progress=100;await engineInstance.deleteFile(ext);await engineInstance.deleteFile(out)}catch(e){console.error(e);f.state='error';f.error=String(e);try{await ffmpeg?.deleteFile(ext);await ffmpeg?.deleteFile(out)}catch{}}render()}
-convertBtn.onclick=async()=>{if(busy)return;busy=true;render();try{await getEngine();for(let i=0;i<queue.length;i++){if(queue[i].state==='queued'||queue[i].state==='error')await convertOne(queue[i],i)}}catch(e){console.error(e);engine.textContent='Could not load FFmpeg. Check your connection and reload.'}finally{busy=false;engine.textContent='All done · your files stayed on this device';render()}};
-window.addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue=''}})
+picker.addEventListener('change',e=>{add(e.target.files);picker.value=''});
+drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over')});drop.addEventListener('dragleave',()=>drop.classList.remove('over'));drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');add(e.dataTransfer.files)});
+filesEl.addEventListener('click',e=>{const b=e.target.closest('[data-remove]');if(!b||busy)return;const f=queue.splice(Number(b.dataset.remove),1)[0];if(f.url)URL.revokeObjectURL(f.url);render()});
+$('#clear').addEventListener('click',()=>{if(busy)return;queue.forEach(f=>{if(f.url)URL.revokeObjectURL(f.url)});queue=[];render()});
+async function getEngine(){
+ if(ffmpeg)return ffmpeg;if(loadingPromise)return loadingPromise;
+ loadingPromise=(async()=>{
+  engineLabel.innerHTML='<span class="loader"></span>Loading conversion engine…';
+  const instance=new FFmpeg();
+  instance.on('progress',({progress})=>{if(!activeFile||!Number.isFinite(progress))return;activeFile.progress=Math.max(1,Math.min(99,progress*100));updateFile(activeFile)});
+  const pkg='https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm';
+  const core='https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+  const classWorkerURL=await toBlobURL(pkg+'/worker.js','text/javascript');
+  const coreURL=await toBlobURL(core+'/ffmpeg-core.js','text/javascript');
+  const wasmURL=await toBlobURL(core+'/ffmpeg-core.wasm','application/wasm');
+  await instance.load({classWorkerURL,coreURL,wasmURL});ffmpeg=instance;
+  engineLabel.textContent='Engine ready · processing on this device';return instance;
+ })();
+ try{return await loadingPromise}catch(error){loadingPromise=null;throw error}
+}
+async function convertOne(f,index){
+ const input='input_'+index+'.webm',output='output_'+index+'.mp4';f.state='preparing';f.progress=0;updateFile(f);
+ try{
+  const engine=await getEngine();activeFile=f;f.state='working';f.progress=1;updateFile(f);engineLabel.textContent='Converting '+f.file.name;
+  await engine.writeFile(input,new Uint8Array(await f.file.arrayBuffer()));
+  const code=await engine.exec(['-y','-i',input,'-map','0:v:0','-map','0:a?','-c:v','libx264','-preset','ultrafast','-crf','23','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-movflags','+faststart',output]);
+  if(code!==0)throw new Error('FFmpeg exited with code '+code);
+  const data=await engine.readFile(output);f.url=URL.createObjectURL(new Blob([data],{type:'video/mp4'}));f.state='done';f.progress=100;
+  await engine.deleteFile(input);await engine.deleteFile(output);
+ }catch(error){
+  console.error('Conversion failed:',error);f.state='error';f.error=error?.message||String(error);engineLabel.textContent='Conversion error: '+f.error.slice(0,100);
+  try{await ffmpeg?.deleteFile(input)}catch{}try{await ffmpeg?.deleteFile(output)}catch{}
+ }finally{activeFile=null;updateFile(f)}
+}
+convertBtn.addEventListener('click',async()=>{
+ if(busy)return;const pending=queue.filter(f=>['queued','error'].includes(f.state));if(!pending.length)return;
+ busy=true;pending.forEach(f=>{f.state='preparing';f.progress=0});render();
+ try{
+  await getEngine();
+  for(const f of pending)await convertOne(f,queue.indexOf(f));
+  const failed=pending.filter(f=>f.state==='error').length;
+  engineLabel.textContent=failed?failed+' conversion(s) failed. Check the file errors and retry.':'All done · your files stayed on this device';
+ }catch(error){
+  console.error('FFmpeg startup failed:',error);
+  pending.filter(f=>f.state!=='done').forEach(f=>{f.state='error';f.error=error?.message||String(error);updateFile(f)});
+  engineLabel.textContent='Could not start FFmpeg: '+(error?.message||String(error)).slice(0,100);
+ }finally{activeFile=null;busy=false;render()}
+});
+window.addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue=''}});
 </script></body></html>
