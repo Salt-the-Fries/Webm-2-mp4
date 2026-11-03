@@ -111,7 +111,8 @@ async function convertOne(f,index){
    engineLabel.textContent='Encoding MP4 · '+f.file.name;
    const encodeArgs=['-y','-i',input,'-map','0:v:0','-map','0:a?','-c:v','libx264','-preset','veryfast','-crf','21','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k'];
    if(postProcess.checked)encodeArgs.push('-vf','unsharp=5:5:0.35:3:3:0.0');
-   encodeArgs.push('-movflags','+faststart',output);\n   const code=await engine.exec(encodeArgs);
+   encodeArgs.push('-movflags','+faststart',output);
+   const code=await engine.exec(encodeArgs);
    if(code!==0)throw new Error('FFmpeg exited with code '+code);
   }
   f.method=copied?'Instant stream copy':postProcess.checked?'H.264 conversion · sharpened':'H.264 conversion · balanced';
