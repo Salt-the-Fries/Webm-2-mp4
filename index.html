@@ -92,8 +92,8 @@ async function convertOne(f,index){
   ffmpegLogs=[];
   await engine.exec(['-hide_banner','-loglevel','info','-i',input]);
   const streamReport=ffmpegLogs.join('\\n');
-  const videoCodec=streamReport.match(/Video:\\s*([a-zA-Z0-9_]+)/i)?.[1]?.toLowerCase();
-  const audioCodec=streamReport.match(/Audio:\\s*([a-zA-Z0-9_]+)/i)?.[1]?.toLowerCase();
+  const videoCodec=streamReport.match(/Video:\s*([a-zA-Z0-9_]+)/i)?.[1]?.toLowerCase();
+  const audioCodec=streamReport.match(/Audio:\s*([a-zA-Z0-9_]+)/i)?.[1]?.toLowerCase();
   let copied=false;
 
   // H.264 video with AAC (or no audio) is safe for the fast MP4 remux path.
