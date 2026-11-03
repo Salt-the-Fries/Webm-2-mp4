@@ -32,14 +32,14 @@ button{font:600 13px 'Space Grotesk';border:0;cursor:pointer;transition:transfor
 <script type="module">
 import { FFmpeg } from 'https://esm.sh/@ffmpeg/ffmpeg@0.12.15';
 const $=s=>document.querySelector(s), picker=$('#picker'), drop=$('#drop'), filesEl=$('#files'), convertBtn=$('#convert'), summary=$('#summary'), engineLabel=$('#engine');
-let queue=[], ffmpeg=null, loadingPromise=null, busy=false, activeFile=null;
+let queue=[], ffmpeg=null, loadingPromise=null, busy=false, activeFile=null, ffmpegLogs=[];
 const fmt=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB';
 const safe=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function render(){
  filesEl.innerHTML='';
  queue.forEach((f,i)=>{
   const row=document.createElement('div');row.className='file';row.dataset.index=String(i);row.style.animationDelay=Math.min(i*35,350)+'ms';
-  const label=f.state==='done'?'MP4 ready':f.state==='error'?'Conversion failed':f.state==='working'?'Converting…':f.state==='preparing'?'Preparing…':'Waiting';
+  const label=f.state==='done'?(f.method||'MP4 ready'):f.state==='error'?'Conversion failed':f.state==='working'?'Converting…':f.state==='preparing'?'Preparing…':'Waiting';
   const status=f.state==='done'?'100% DONE':f.state==='error'?'ERROR':f.state==='working'?Math.round(f.progress)+'%':f.state==='preparing'?'STARTING':'QUEUED';
   row.innerHTML='<div class="file-left"><div class="file-name">'+safe(f.file.name)+'</div><div class="file-meta">'+fmt(f.file.size)+' · '+label+'</div><div class="bar"><i style="width:'+f.progress+'%"></i></div></div><div class="file-right"><div class="status '+f.state+'">'+status+'</div>'+(f.url?'<a class="download" href="'+f.url+'" download="'+safe(f.outputName)+'">↓ MP4</a>':'')+(!busy?'<button class="remove" data-remove="'+i+'" aria-label="Remove file">×</button>':'')+'</div>';
   filesEl.append(row);
@@ -65,7 +65,7 @@ async function getEngine(){
   engineLabel.innerHTML='<span class="loader"></span>Loading conversion engine…';
   const instance=new FFmpeg();
   instance.on('progress',({progress})=>{if(!activeFile||!Number.isFinite(progress))return;activeFile.progress=Math.max(1,Math.min(99,progress*100));updateFile(activeFile)});
-  instance.on('log',({message})=>{if(message)console.debug('[FFmpeg]',message)});
+  instance.on('log',({message})=>{if(message){ffmpegLogs.push(message);console.debug('[FFmpeg]',message)}});
   const pkg='https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm';
   const core='https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
   // Keep the worker on the CDN origin. Turning this module worker into a blob breaks its relative imports (./const.js, ./errors.js).
@@ -86,8 +86,32 @@ async function convertOne(f,index){
  try{
   const engine=await getEngine();activeFile=f;f.state='working';f.progress=1;updateFile(f);engineLabel.textContent='Converting '+f.file.name;
   await engine.writeFile(input,new Uint8Array(await f.file.arrayBuffer()));
-  const code=await engine.exec(['-y','-i',input,'-map','0:v:0','-map','0:a?','-c:v','libx264','-preset','ultrafast','-crf','23','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-movflags','+faststart',output]);
-  if(code!==0)throw new Error('FFmpeg exited with code '+code);
+
+  // Probe the real stream codecs. A .webm extension alone cannot tell us
+  // whether the streams can be copied into a broadly compatible MP4.
+  ffmpegLogs=[];
+  await engine.exec(['-hide_banner','-loglevel','info','-i',input]);
+  const streamReport=ffmpegLogs.join('\\n');
+  const videoCodec=streamReport.match(/Video:\\s*([a-zA-Z0-9_]+)/i)?.[1]?.toLowerCase();
+  const audioCodec=streamReport.match(/Audio:\\s*([a-zA-Z0-9_]+)/i)?.[1]?.toLowerCase();
+  let copied=false;
+
+  // H.264 video with AAC (or no audio) is safe for the fast MP4 remux path.
+  if(videoCodec==='h264'&&(!audioCodec||audioCodec==='aac')){
+   engineLabel.textContent='Fast remux · '+f.file.name;
+   const copyCode=await engine.exec(['-y','-i',input,'-map','0:v:0','-map','0:a?','-c','copy','-movflags','+faststart',output]);
+   copied=copyCode===0;
+  }
+
+  // Most game WEBM files use VP8/VP9/AV1 and/or Opus/Vorbis, which need
+  // transcoding for dependable playback in common MP4 players.
+  if(!copied){
+   try{await engine.deleteFile(output)}catch{}
+   engineLabel.textContent='Encoding MP4 · '+f.file.name;
+   const code=await engine.exec(['-y','-i',input,'-map','0:v:0','-map','0:a?','-c:v','libx264','-preset','ultrafast','-crf','23','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-movflags','+faststart',output]);
+   if(code!==0)throw new Error('FFmpeg exited with code '+code);
+  }
+  f.method=copied?'Instant stream copy':'H.264 conversion';
   const data=await engine.readFile(output);
   if(!(data instanceof Uint8Array)||data.byteLength<1024)throw new Error('FFmpeg returned an empty or invalid MP4 file.');
   // Verify the MP4 container signature before exposing a download.
