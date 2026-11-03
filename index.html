@@ -66,9 +66,11 @@ async function getEngine(){
   engineLabel.innerHTML='<span class="loader"></span>Loading conversion engine…';
   const instance=new FFmpeg();
   instance.on('progress',({progress})=>{if(!activeFile||!Number.isFinite(progress))return;activeFile.progress=Math.max(1,Math.min(99,progress*100));updateFile(activeFile)});
+  instance.on('log',({message})=>{if(message)console.debug('[FFmpeg]',message)});
   const pkg='https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm';
   const core='https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
-  const classWorkerURL=await toBlobURL(pkg+'/worker.js','text/javascript');
+  // Keep the worker on the CDN origin. Turning this module worker into a blob breaks its relative imports (./const.js, ./errors.js).
+  const classWorkerURL=pkg+'/worker.js';
   const coreURL=await toBlobURL(core+'/ffmpeg-core.js','text/javascript');
   const wasmURL=await toBlobURL(core+'/ffmpeg-core.wasm','application/wasm');
   await instance.load({classWorkerURL,coreURL,wasmURL});ffmpeg=instance;
@@ -83,7 +85,12 @@ async function convertOne(f,index){
   await engine.writeFile(input,new Uint8Array(await f.file.arrayBuffer()));
   const code=await engine.exec(['-y','-i',input,'-map','0:v:0','-map','0:a?','-c:v','libx264','-preset','ultrafast','-crf','23','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-movflags','+faststart',output]);
   if(code!==0)throw new Error('FFmpeg exited with code '+code);
-  const data=await engine.readFile(output);f.url=URL.createObjectURL(new Blob([data],{type:'video/mp4'}));f.state='done';f.progress=100;
+  const data=await engine.readFile(output);
+  if(!(data instanceof Uint8Array)||data.byteLength<1024)throw new Error('FFmpeg returned an empty or invalid MP4 file.');
+  // Verify the MP4 container signature before exposing a download.
+  const signature=new TextDecoder().decode(data.subarray(4,8));
+  if(signature!=='ftyp')throw new Error('Output is not a valid MP4 container (missing ftyp signature).');
+  f.url=URL.createObjectURL(new Blob([data],{type:'video/mp4'}));f.state='done';f.progress=100;
   await engine.deleteFile(input);await engine.deleteFile(output);
  }catch(error){
   console.error('Conversion failed:',error);f.state='error';f.error=error?.message||String(error);engineLabel.textContent='Conversion error: '+f.error.slice(0,100);
