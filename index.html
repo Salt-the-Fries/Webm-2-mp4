@@ -32,7 +32,8 @@ button{font:600 13px 'Space Grotesk';border:0;cursor:pointer;transition:transfor
 <script type="module">
 import { FFmpeg } from 'https://esm.sh/@ffmpeg/ffmpeg@0.12.15';
 const $=s=>document.querySelector(s), picker=$('#picker'), drop=$('#drop'), filesEl=$('#files'), convertBtn=$('#convert'), summary=$('#summary'), engineLabel=$('#engine');
-let queue=[], ffmpeg=null, loadingPromise=null, busy=false, activeFile=null, ffmpegLogs=[];\nconst postProcess=$('#postprocess');
+let queue=[], ffmpeg=null, loadingPromise=null, busy=false, activeFile=null, ffmpegLogs=[];
+const postProcess=$('#postprocess');
 const fmt=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB';
 const safe=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function render(){
@@ -108,7 +109,9 @@ async function convertOne(f,index){
   if(!copied){
    try{await engine.deleteFile(output)}catch{}
    engineLabel.textContent='Encoding MP4 · '+f.file.name;
-   const encodeArgs=['-y','-i',input,'-map','0:v:0','-map','0:a?','-c:v','libx264','-preset','veryfast','-crf','21','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k'];\n   if(postProcess.checked)encodeArgs.push('-vf','unsharp=5:5:0.35:3:3:0.0');\n   encodeArgs.push('-movflags','+faststart',output);\n   const code=await engine.exec(encodeArgs);
+   const encodeArgs=['-y','-i',input,'-map','0:v:0','-map','0:a?','-c:v','libx264','-preset','veryfast','-crf','21','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k'];
+   if(postProcess.checked)encodeArgs.push('-vf','unsharp=5:5:0.35:3:3:0.0');
+   encodeArgs.push('-movflags','+faststart',output);\n   const code=await engine.exec(encodeArgs);
    if(code!==0)throw new Error('FFmpeg exited with code '+code);
   }
   f.method=copied?'Instant stream copy':postProcess.checked?'H.264 conversion · sharpened':'H.264 conversion · balanced';
