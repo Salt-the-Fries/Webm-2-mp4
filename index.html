@@ -67,7 +67,7 @@ async function getEngine(){
   instance.on('progress',({progress})=>{if(!activeFile||!Number.isFinite(progress))return;activeFile.progress=Math.max(1,Math.min(99,progress*100));updateFile(activeFile)});
   instance.on('log',({message})=>{if(message)console.debug('[FFmpeg]',message)});
   const pkg='https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm';
-  const core='https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+  const core='https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
   // Keep the worker on the CDN origin. Turning this module worker into a blob breaks its relative imports (./const.js, ./errors.js).
   // A module worker must be same-origin. Use a same-origin Blob bootstrap that imports the real worker from jsDelivr; its own relative imports then resolve against jsDelivr correctly.
   const workerBootstrap=new Blob(['import "'+pkg+'/worker.js";'],{type:'text/javascript'});
