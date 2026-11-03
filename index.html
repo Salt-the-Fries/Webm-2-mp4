@@ -31,7 +31,6 @@ button{font:600 13px 'Space Grotesk';border:0;cursor:pointer;transition:transfor
 </main>
 <script type="module">
 import { FFmpeg } from 'https://esm.sh/@ffmpeg/ffmpeg@0.12.15';
-import { toBlobURL } from 'https://esm.sh/@ffmpeg/util@0.12.2';
 const $=s=>document.querySelector(s), picker=$('#picker'), drop=$('#drop'), filesEl=$('#files'), convertBtn=$('#convert'), summary=$('#summary'), engineLabel=$('#engine');
 let queue=[], ffmpeg=null, loadingPromise=null, busy=false, activeFile=null;
 const fmt=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB';
@@ -73,8 +72,10 @@ async function getEngine(){
   // A module worker must be same-origin. Use a same-origin Blob bootstrap that imports the real worker from jsDelivr; its own relative imports then resolve against jsDelivr correctly.
   const workerBootstrap=new Blob(['import "'+pkg+'/worker.js";'],{type:'text/javascript'});
   const classWorkerURL=URL.createObjectURL(workerBootstrap);
-  const coreURL=await toBlobURL(core+'/ffmpeg-core.js','text/javascript');
-  const wasmURL=await toBlobURL(core+'/ffmpeg-core.wasm','application/wasm');
+  // The worker runs from jsDelivr, so load the core and WASM from that same origin.
+  // Page-origin Blob URLs can fail when imported by a CDN-origin module worker.
+  const coreURL=core+'/ffmpeg-core.js';
+  const wasmURL=core+'/ffmpeg-core.wasm';
   try{await instance.load({classWorkerURL,coreURL,wasmURL})}finally{URL.revokeObjectURL(classWorkerURL)}ffmpeg=instance;
   engineLabel.textContent='Engine ready · processing on this device';return instance;
  })();
